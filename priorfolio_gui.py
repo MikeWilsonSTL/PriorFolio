@@ -264,7 +264,7 @@ class App(tk.Tk):
         self.help_window = None
         self.copies_window = None
         self.pane_job = None
-        self.sash_limit = {}  # pane height -> furthest divider position Tk allows
+        self.sash_limit = None  # (pane height, furthest divider position Tk allows)
 
         self.out_base = Path.home() / "PriorFolio" / "runs"
         self.snapshot_var = tk.BooleanVar(value=True)
@@ -561,20 +561,22 @@ class App(tk.Tk):
         sash = max(1, lower.winfo_y() - upper.winfo_height())
         text_request = max(self.email_text.winfo_reqheight(), self.table_text.winfo_reqheight())
         minimum_lower = lower.winfo_reqheight() - text_request + 72
-        # Heading plus three project rows, at whatever size the fonts are.
-        minimum_upper = 4 * self.row_height + 16
+        # The list keeps a heading and three rows at whatever size the fonts are,
+        # but gives rows up, down to one, before the controls below lose room.
+        def rows(count):
+            return (count + 1) * self.row_height + 16
+        minimum_upper = max(rows(1), min(rows(3), available - sash - minimum_lower))
         maximum_upper = max(minimum_upper, available - sash - minimum_lower)
         current = self.panes.sashpos(0)
         target = max(minimum_upper, min(current, maximum_upper))
         # When the minimums do not both fit, Tk clamps the divider. Asking for an
         # unreachable position again on every <Configure> would never settle.
-        limit = self.sash_limit.get(available)
-        if limit is not None:
-            target = min(target, limit)
+        if self.sash_limit and self.sash_limit[0] == available:
+            target = min(target, self.sash_limit[1])
         if current != target:
-            reached = int(self.panes.sashpos(0, target))
+            reached = self.panes.sashpos(0, target)
             if reached < target:
-                self.sash_limit[available] = reached
+                self.sash_limit = (available, reached)
 
     def add_tab(self, title, copy_help):
         frame = ttk.Frame(self.tabs)
