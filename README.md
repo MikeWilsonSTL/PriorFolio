@@ -139,6 +139,7 @@ silently removing source files.
 ```console
 priorfolio --root D:\projects --list
 priorfolio --add D:\projects\example --select all
+priorfolio --saved --list
 priorfolio --root D:\projects --select "1,4-7,example-project" --out D:\records
 priorfolio --backup RUN_FOLDER --destination E:\Offline\PriorFolio-full.zip
 priorfolio --backup RUN_FOLDER --destination D:\CloudSync\PriorFolio-cloud.zip --withhold-secrets
@@ -155,7 +156,10 @@ Snapshots and signed timestamps are on by default. `--no-snapshot` creates a
 hash-only record that cannot provide a complete source backup. `--no-timestamp`
 keeps the run offline. Every new run is read back and verified before it is
 reported as finished. `--add` alone scans only the supplied
-projects. With no roots or individual projects, the CLI scans the current folder.
+projects. `--saved` scans the folders and single projects added in the desktop
+app, numbered as the app lists them, and combines with `--root` and `--add`;
+saved folders that no longer exist are skipped. With no roots, individual
+projects or `--saved`, the CLI scans the current folder.
 `--runs` lists the runs remembered by the GUI and the CLI with their backup
 state. Runs are remembered when they are generated, and when `--verify` finds
 their evidence intact.

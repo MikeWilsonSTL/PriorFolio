@@ -577,6 +577,88 @@ def test_desktop_does_not_save_over_settings_it_cannot_read(desktop):
     assert "Settings could not be saved" in desktop.status_var.get()
 
 
+def listed_names(result):
+    """Project names from --list output, in its numbered order."""
+    rows = [line.split() for line in result.stdout.splitlines() if line[:3].strip().isdigit()]
+    assert [int(row[0]) for row in rows] == list(range(1, len(rows) + 1)), result.stdout
+    return [row[1] for row in rows]
+
+
+@pytest.fixture
+def saved(projects, tmp_path, isolated_settings):
+    """Settings as the desktop app saves them: a folder of projects, a single
+    project, and a folder that has since been deleted."""
+    solo = tmp_path / "elsewhere" / "Solo"
+    write(solo, {"notes.txt": "solo\n"})
+    isolated_settings.write_text(json.dumps({
+        "folders": [str(projects), str(tmp_path / "deleted")], "projects": [str(solo)]}))
+    return solo
+
+
+def test_cli_saved_lists_the_folders_and_projects_saved_in_the_app(projects, saved, tmp_path):
+    listed = cli("--saved", "--list", cwd=tmp_path)
+    assert listed.returncode == 0, listed.stderr
+    assert listed_names(listed) == ["Alpha", "Beta", "Solo"]
+    assert f"no longer exists: {tmp_path / 'deleted'}" in listed.stderr
+
+
+def test_cli_saved_works_with_select_and_details(projects, saved, tmp_path):
+    edited = cli("--saved", "--details", "Solo", "--title", "Saved solo")
+    assert edited.returncode == 0, edited.stderr
+    assert exports.saved_details()[str(saved.resolve())] == {"title": "Saved solo"}
+    target = tmp_path / "details.json"
+    assert cli("--saved", "--export-details", target).returncode == 0
+    assert [p["name"] for p in json.loads(target.read_text(encoding="utf-8"))["projects"]] == [
+        "Alpha", "Beta", "Solo"]
+    made = cli("--saved", "--select", "3", "--no-snapshot", "--out", tmp_path / "runs")
+    assert made.returncode == 0, made.stderr
+    (run,) = (tmp_path / "runs").iterdir()
+    assert "## 1. Saved solo" in (run / "disclosure.md").read_text(encoding="utf-8")
+
+
+def test_cli_saved_combines_with_root_and_add(projects, saved, tmp_path):
+    other = tmp_path / "other"
+    write(other / "Gamma", {"g.txt": "g\n"})
+    write(tmp_path / "Extra", {"e.txt": "e\n"})
+    listed = cli("--saved", "--root", other, "--add", tmp_path / "Extra", "--list")
+    assert listed.returncode == 0, listed.stderr
+    assert listed_names(listed) == ["Alpha", "Beta", "Gamma", "Solo", "Extra"]
+
+
+@pytest.mark.parametrize("settings", [None, {"folders": [], "projects": []}, "only deleted"])
+def test_cli_saved_with_nothing_saved_stops_and_writes_nothing(projects, tmp_path, isolated_settings, settings):
+    if settings == "only deleted":
+        settings = {"folders": [str(tmp_path / "deleted")]}
+    if settings is not None:
+        isolated_settings.write_text(json.dumps(settings))
+    before = isolated_settings.read_bytes() if isolated_settings.exists() else None
+    result = cli("--saved", "--select", "all", "--out", tmp_path / "runs", cwd=projects)
+    assert result.returncode != 0 and "Traceback" not in result.stderr
+    assert "No saved folders or projects" in result.stderr and "--root" in result.stderr
+    assert not (tmp_path / "runs").exists()
+    assert (isolated_settings.read_bytes() if isolated_settings.exists() else None) == before
+
+
+def test_cli_without_sources_still_scans_the_current_folder(projects, saved):
+    listed = cli("--list", cwd=projects)
+    assert listed.returncode == 0, listed.stderr
+    assert listed_names(listed) == ["Alpha", "Beta"]
+
+
+def test_cli_saved_numbers_projects_as_the_app_does(desktop, tmp_path):
+    solo = tmp_path / "elsewhere" / "Solo"
+    write(solo, {"notes.txt": "solo\n"})
+    data = json.loads(gui.SETTINGS.read_text(encoding="utf-8"))
+    data["projects"] = [str(solo)]
+    gui.SETTINGS.write_text(json.dumps(data))
+    desktop.sources = desktop.load_sources()
+    button(desktop, "Rescan").invoke()
+    settle(desktop)
+    listed = cli("--saved", "--list", settings=gui.SETTINGS)
+    assert listed.returncode == 0, listed.stderr
+    assert listed_names(listed) == [p["name"] for p in desktop.projects] == ["Alpha", "Beta", "Solo"]
+
+
 def test_cli_runs_lists_remembered_runs_and_backup_state(projects, tmp_path):
     assert "No remembered runs." in cli("--runs").stdout
     for name in ("Alpha", "Beta"):

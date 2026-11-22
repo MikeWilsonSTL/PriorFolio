@@ -207,6 +207,22 @@ def update_settings(change, path=None):
             temporary.unlink(missing_ok=True)
 
 
+SOURCE_KINDS = ("folders", "projects")  # folders of projects, and single projects
+
+
+def saved_sources(path=None):
+    """The folders and single projects added in the desktop app, as (kind, path)
+    in the order the app scans them. Entries that are not text are dropped;
+    whether each folder still exists is for the caller to check."""
+    saved = read_settings(path)
+    sources = []
+    for kind in SOURCE_KINDS:
+        values = saved.get(kind)
+        if isinstance(values, list):
+            sources.extend((kind, value) for value in values if isinstance(value, str) and value)
+    return sources
+
+
 def clean_details(value):
     """Only the known text fields of one project's disclosure details."""
     if not isinstance(value, dict):

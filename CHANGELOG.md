@@ -16,6 +16,9 @@
 - The desktop app and the command line can change settings while the other is
   open without overwriting each other's details or runs.
 - `PRIORFOLIO_SETTINGS` names a different settings file.
+- `--saved` scans the folders and single projects added in the desktop app,
+  alone or with `--root` and `--add`. It stops with a message when nothing is
+  saved, instead of scanning the current folder.
 
 ## 0.1.0a3 - signed timestamps and cloud backup copies
 

@@ -285,14 +285,7 @@ class App(tk.Tk):
     # ---- settings ----
 
     def load_sources(self):
-        saved = exports.read_settings(SETTINGS)
-        sources = []
-        for kind in KIND_LABEL:
-            values = saved.get(kind, [])
-            if isinstance(values, list):
-                sources.extend((kind, path) for path in values
-                               if isinstance(path, str) and path and Path(path).is_dir())
-        return sources
+        return [(kind, path) for kind, path in exports.saved_sources(SETTINGS) if Path(path).is_dir()]
 
     def load_details(self):
         return exports.saved_details(SETTINGS)

@@ -1244,6 +1244,8 @@ def build_parser():
                                      'comma separated (e.g. "1,4-7,example-project")')
     ap.add_argument("--add", type=Path, action="append", default=[],
                     help="a folder to treat as one project, repo or not (repeatable)")
+    ap.add_argument("--saved", action="store_true",
+                    help="also scan the folders and single projects added in the desktop app")
     ap.add_argument("--snapshot", action="store_true",
                     default=True, help="save source snapshots (default)")
     ap.add_argument("--no-snapshot", action="store_false", dest="snapshot",
@@ -1510,13 +1512,26 @@ def run_cli(args):
                 print(f"Note: this run could not be added to the remembered runs ({e}).", file=sys.stderr)
         sys.exit(1 if problems else 0)
 
-    roots = [r.resolve() for r in (args.root or ([] if args.add else [Path.cwd()]))]
-    for folder in roots + args.add:
+    roots, singles = [], []
+    if args.saved:
+        from priorfolio_exports import saved_sources
+        for kind, path in saved_sources():
+            if Path(path).is_dir():
+                (roots if kind == "folders" else singles).append(Path(path).resolve())
+            else:
+                print(f"Skipping a saved folder that no longer exists: {path}", file=sys.stderr)
+        if not roots and not singles:
+            raise ToolError("No saved folders or projects. Add them in the desktop app "
+                            "(priorfolio --gui), or name them with --root or --add.")
+    default = [] if args.add or args.saved else [Path.cwd()]
+    roots += [r.resolve() for r in (args.root or default)]
+    singles += args.add
+    for folder in roots + singles:
         if not folder.is_dir():
             raise ToolError(f"not a folder: {folder}")
 
-    print("Scanning " + ", ".join(str(r) for r in roots) + " ...", file=sys.stderr)
-    projects = scan_roots(roots, args.add)
+    print("Scanning " + ", ".join(str(r) for r in roots + singles) + " ...", file=sys.stderr)
+    projects = scan_roots(roots, singles)
     if not projects:
         raise ToolError("no projects found")
     from priorfolio_exports import saved_details, save_details
