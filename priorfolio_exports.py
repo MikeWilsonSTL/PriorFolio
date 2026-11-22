@@ -158,6 +158,10 @@ def settings_path():
     return Path(os.environ.get("PRIORFOLIO_SETTINGS") or Path.home() / ".priorfolio" / "settings.json")
 
 
+class SettingsError(OSError):
+    """The settings file exists but cannot be read, so it must not be replaced."""
+
+
 def read_settings(path=None):
     try:
         data = json.loads(Path(path or settings_path()).read_text(encoding="utf-8"))
@@ -166,11 +170,29 @@ def read_settings(path=None):
     return data if isinstance(data, dict) else {}
 
 
+def _settings_to_update(path):
+    """The current settings, {} only when there is no file yet. Anything else that
+    stops it being read raises SettingsError, so a save never replaces a file it
+    could not read and loses the folders, runs and details in it."""
+    def refuse(reason):
+        return SettingsError(f"{path} could not be read ({reason}). Nothing was saved; "
+                             "fix or remove the file, then try again.")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise refuse(e) from None
+    if not isinstance(data, dict):
+        raise refuse("it does not hold a JSON object")
+    return data
+
+
 def update_settings(change, path=None):
     """Re-read the file, apply change(data) in place and replace it atomically, so
     the CLI and an open desktop app only overwrite the keys they changed."""
     path = Path(path or settings_path())
-    data = read_settings(path)
+    data = _settings_to_update(path)
     change(data)
     temporary = None
     try:
@@ -219,16 +241,18 @@ def saved_runs(path=None):
     return list(dict.fromkeys(Path(value).resolve() for value in values if isinstance(value, str) and value))
 
 
+def add_runs(data, runs):
+    """Put these run folders first in data["runs"], keeping all others."""
+    runs = [Path(run).resolve() for run in runs]
+    old = data.get("runs")
+    old = [Path(value).resolve() for value in (old if isinstance(old, list) else [])
+           if isinstance(value, str) and value]
+    data["runs"] = [str(run) for run in dict.fromkeys(runs + old)]
+
+
 def record_runs(runs, path=None):
     """Put these run folders first in the remembered runs, keeping all others."""
-    runs = [Path(run).resolve() for run in runs]
-
-    def change(data):
-        old = data.get("runs")
-        old = [Path(value).resolve() for value in (old if isinstance(old, list) else [])
-               if isinstance(value, str) and value]
-        data["runs"] = [str(run) for run in dict.fromkeys(runs + old)]
-    update_settings(change, path)
+    update_settings(lambda data: add_runs(data, runs), path)
 
 
 def public_text(value):

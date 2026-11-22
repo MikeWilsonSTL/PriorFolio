@@ -1065,7 +1065,14 @@ def verify_run(run_dir, against_disk=False, expect_bundle=None, metadata_only=Fa
     OpenSSL 3 is available; without it they are reported by run_summary as
     unchecked rather than counted as problems.
     """
+    return check_run(run_dir, against_disk, expect_bundle, metadata_only)[0]
+
+
+def check_run(run_dir, against_disk=False, expect_bundle=None, metadata_only=False):
+    """verify_run's problems, and the ones among them that are only differences
+    between the project folders on disk and the run (always [] without against_disk)."""
     run_dir = Path(run_dir).resolve()
+    on_disk = []
     try:
         json_path = safe_child(run_dir, "evidence.json")
         data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -1073,7 +1080,7 @@ def verify_run(run_dir, against_disk=False, expect_bundle=None, metadata_only=Fa
         if not isinstance(projects, list):
             raise TypeError("'projects' is not a list")
     except (OSError, ValueError, KeyError, TypeError) as e:
-        return [f"evidence.json is unreadable: {e}"]
+        return [f"evidence.json is unreadable: {e}"], on_disk
 
     problems = []
     bundle = sha256_file(json_path)
@@ -1105,8 +1112,10 @@ def verify_run(run_dir, against_disk=False, expect_bundle=None, metadata_only=Fa
 
     for index, p in enumerate(projects, 1):
         try:
-            problems += _verify_project(run_dir, p, against_disk, metadata_only,
-                                        withheld.get(p.get("manifest") if isinstance(p, dict) else None, {}))
+            in_run, disk = _verify_project(run_dir, p, against_disk, metadata_only,
+                                           withheld.get(p.get("manifest") if isinstance(p, dict) else None, {}))
+            problems += in_run + disk
+            on_disk += disk
         except (KeyError, TypeError, AttributeError, ValueError) as e:
             name = p.get("name") if isinstance(p, dict) else None
             problems.append(f"{name or 'project ' + str(index)}: entry in evidence.json "
@@ -1130,18 +1139,19 @@ def verify_run(run_dir, against_disk=False, expect_bundle=None, metadata_only=Fa
                 problems.append(f"timestamps/{tsr.name}: {detail}")
     except (OSError, ValueError) as e:
         problems.append(f"timestamps are unreadable: {e}")
-    return problems
+    return problems, on_disk
 
 
 def _verify_project(run_dir, p, against_disk, metadata_only=False, withheld=None):
-    """Problems with one project. withheld maps paths a cloud copy left out to their hashes."""
+    """Problems with one project's evidence, and its differences from the project on
+    disk. withheld maps paths a cloud copy left out to their hashes."""
     name, problems, withheld = p["name"], [], withheld or {}
     try:
         raw = safe_child(run_dir, p["manifest"]).read_bytes()
     except OSError:
-        return [f"{name}: manifest is missing"]
+        return [f"{name}: manifest is missing"], []
     if (hashlib.sha256(raw).hexdigest() if raw else None) != p["content_sha256"]:
-        return [f"{name}: manifest does not match the recorded content hash"]
+        return [f"{name}: manifest does not match the recorded content hash"], []
     entries = read_manifest(raw)
     for rel in entries:
         # Validate names even when not comparing to live projects.
@@ -1179,9 +1189,9 @@ def _verify_project(run_dir, p, against_disk, metadata_only=False, withheld=None
                 on_disk[rel] = sha256_file(safe_child(base, rel))
             except OSError:
                 pass
-        problems += [f"{name}: on disk {m}"
-                     for m in compare_hashes(entries, on_disk, report_extra=False)]
-    return problems
+        return problems, [f"{name}: on disk {m}"
+                          for m in compare_hashes(entries, on_disk, report_extra=False)]
+    return problems, []
 
 
 def run_summary(run_dir, signatures=False):
@@ -1377,9 +1387,11 @@ def import_details(path):
             raise ToolError(f"{where}: {', '.join(sorted(bad))} must be text.")
         if not Path(entry["path"]).is_dir():
             raise ToolError(f"{where}: not a folder: {entry['path']}")
-        if entry["path"] in changes:
+        # Saved under the path a scan gives the project, or a scan never finds them.
+        key = str(Path(entry["path"]).resolve())
+        if key in changes:
             raise ToolError(f"{where}: {entry['path']} is listed twice.")
-        changes[entry["path"]] = {f: entry[f].strip() for f in fields & set(entry)}
+        changes[key] = {f: entry[f].strip() for f in fields & set(entry)}
     return changes
 
 
@@ -1466,7 +1478,7 @@ def run_cli(args):
             print(f"Generated (UTC): {summary['generated_utc']}, {summary['projects']} project(s)")
             for name, when, state in summary["timestamps"]:
                 print(f"Timestamp {name}: {when or 'time not readable'} ({SIGNATURE_LABELS[state]})")
-        problems = verify_run(args.verify, args.against_disk, args.expect, args.metadata_only)
+        problems, on_disk = check_run(args.verify, args.against_disk, args.expect, args.metadata_only)
         for problem in problems:
             print(problem)
         try:
@@ -1489,9 +1501,7 @@ def run_cli(args):
                   "or pass it with --expect.")
         # Remember a run whose evidence verifies, as the desktop app does. Changes in the
         # local project folders since the run do not count against the run itself.
-        intact = summary and (not problems or args.against_disk and not verify_run(
-            args.verify, expect_bundle=args.expect, metadata_only=args.metadata_only))
-        if intact:
+        if summary and len(problems) == len(on_disk):
             try:
                 from priorfolio_exports import record_runs
                 record_runs([args.verify])

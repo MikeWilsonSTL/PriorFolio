@@ -305,9 +305,11 @@ class App(tk.Tk):
                 data[kind] = [p for k, p in self.sources if k == kind]
             if self.out_dir:
                 data["last_run"] = str(self.out_dir)
+            exports.add_runs(data, self.runs)
         try:
             exports.update_settings(change, SETTINGS)
-            exports.record_runs(self.runs, SETTINGS)
+        except exports.SettingsError as e:
+            self.status_var.set(f"Settings could not be saved: {e}")
         except OSError:
             self.status_var.set("Settings could not be saved. This session still works.")
 
@@ -755,6 +757,8 @@ class App(tk.Tk):
             self.project_details[project["path"]] = details
             try:
                 exports.save_details({project["path"]: details}, SETTINGS)
+            except exports.SettingsError as e:
+                self.status_var.set(f"Details apply to this session only: {e}")
             except OSError:
                 self.status_var.set("Details could not be saved. They apply to this session only.")
             win.destroy()
@@ -829,10 +833,9 @@ class App(tk.Tk):
 
         def job():
             summary = sa.run_summary(folder, signatures=True)
-            evidence = sa.verify_run(folder, metadata_only=metadata_only)
-            changed = []
-            if summary and compare:
-                changed = [m for m in sa.verify_run(folder, against_disk=True, metadata_only=metadata_only) if m not in evidence]
+            problems, changed = sa.check_run(folder, against_disk=bool(summary and compare),
+                                             metadata_only=metadata_only)
+            evidence = [m for m in problems if m not in changed]
             return folder, summary, evidence, changed, metadata_only, compare
 
         self.status_var.set("Verifying ...")

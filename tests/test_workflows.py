@@ -2,6 +2,7 @@
 import gc
 import hashlib
 import json
+import os
 import shutil
 import tkinter as tk
 import zipfile
@@ -428,7 +429,7 @@ def test_row_help_explains_a_skipped_git_status():
 
 # ------------------------------------------------- command line and shared settings
 
-def cli(*args, settings=None):
+def cli(*args, settings=None, cwd=None):
     """Run the CLI in a subprocess. Timestamps stay off; settings go to the test file."""
     import os
     import subprocess
@@ -439,7 +440,7 @@ def cli(*args, settings=None):
     args = [str(a) for a in args]
     if "--select" in args:
         args.append("--no-timestamp")  # on by default; tests stay offline
-    return subprocess.run([sys.executable, str(Path(core.__file__)), *args], env=env,
+    return subprocess.run([sys.executable, str(Path(core.__file__).resolve()), *args], env=env, cwd=cwd,
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
@@ -525,6 +526,55 @@ def test_cli_import_details_rejects_bad_files_without_saving(projects, tmp_path,
     result = cli("--import-details", target)
     assert result.returncode != 0 and message in result.stderr and "Traceback" not in result.stderr
     assert exports.saved_details() == {}
+
+
+def test_cli_import_details_saves_under_the_path_a_scan_uses(projects, tmp_path):
+    # A relative path, and one written with extra separators and "." parts, as a
+    # hand-edited file or one from another tool might have them.
+    loose = str(projects) + "/./Beta/"
+    if os.name == "nt":
+        loose = loose.replace("\\", "/")
+    data = {"format": "priorfolio-details-v1", "projects": [
+        {"path": "projects/Alpha", "title": "Relative"}, {"path": loose, "title": "Loose"}]}
+    target = tmp_path / "details.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    imported = cli("--import-details", target, cwd=tmp_path)
+    assert imported.returncode == 0 and "2 project(s)" in imported.stdout, imported.stderr
+    assert exports.saved_details() == {str((projects / "Alpha").resolve()): {"title": "Relative"},
+                                       str((projects / "Beta").resolve()): {"title": "Loose"}}
+    shown = cli("--root", projects, "--details", "all")
+    assert "Public title: Relative" in shown.stdout and "Public title: Loose" in shown.stdout
+
+    # Two spellings of one folder are the same project.
+    data["projects"][1]["path"] = str(projects / "Alpha")
+    target.write_text(json.dumps(data), encoding="utf-8")
+    twice = cli("--import-details", target, cwd=tmp_path)
+    assert twice.returncode != 0 and "listed twice" in twice.stderr
+
+
+def test_cli_refuses_to_save_over_settings_it_cannot_read(projects, isolated_settings):
+    assert cli("--root", projects, "--details", "Alpha", "--title", "Kept").returncode == 0
+    good = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    good["folders"] = [str(projects)]
+    broken = json.dumps(good, indent=2).replace('"folders"', ',"folders"', 1)  # one stray comma
+    isolated_settings.write_text(broken, encoding="utf-8")
+
+    edited = cli("--root", projects, "--details", "Beta", "--title", "Lost")
+    assert edited.returncode != 0 and "Traceback" not in edited.stderr
+    assert str(isolated_settings) in edited.stderr and "Nothing was saved" in edited.stderr
+    assert isolated_settings.read_text(encoding="utf-8") == broken
+
+    run = cli("--root", projects, "--select", "Alpha", "--no-snapshot", "--out", projects.parent / "runs")
+    assert isolated_settings.read_text(encoding="utf-8") == broken
+    assert "could not be added to the remembered runs" in run.stderr
+
+
+def test_desktop_does_not_save_over_settings_it_cannot_read(desktop):
+    broken = gui.SETTINGS.read_text(encoding="utf-8") + "}"
+    gui.SETTINGS.write_text(broken, encoding="utf-8")
+    desktop.save_sources()
+    assert gui.SETTINGS.read_text(encoding="utf-8") == broken
+    assert "Settings could not be saved" in desktop.status_var.get()
 
 
 def test_cli_runs_lists_remembered_runs_and_backup_state(projects, tmp_path):
